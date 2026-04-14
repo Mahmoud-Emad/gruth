@@ -4,16 +4,16 @@ A terminal dashboard for monitoring and syncing multiple git repositories.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ gruth │ git repo monitor │ v0.2.0 │ ● idle                              │
+│ gruth │ git repo monitor │ v0.2.0 │ ● idle                               │
 ├──────────────────────────────────────────────────────────────────────────┤
-│  Repository        Branch       Status     Sync     Commit     Br       │
-│▸ hero_lib          development  ● clean    ✓ synced 2h ago     3 br     │
-│  hero_router       main         ● dirty    ↑3 ↓1   15m ago    2 br     │
-│  hero_proc         development  ● clean    ↓5       1d ago     5 br     │
-│  hero_browser      main         ✖ conflict —        3d ago     1 br     │
-│  hero_books        development  ● clean    ✓ synced 45d ago    2 br     │
+│  Repository        Branch       Status     Sync     Commit     Br        │
+│▸ hero_lib          development  ● clean    ✓ synced 2h ago     3 br      │
+│  hero_router       main         ● dirty    ↑3 ↓1   15m ago    2 br       │
+│  hero_proc         development  ● clean    ↓5       1d ago     5 br      │
+│  hero_browser      main         ✖ conflict —        3d ago     1 br      │
+│  hero_books        development  ● clean    ✓ synced 45d ago    2 br      │
 ├──────────────────────────────────────────────────────────────────────────┤
-│  5 repos │ ● 3 ● 1 ⏳1 │ q quit / search f filter s sort ⏎ detail     │
+│  5 repos │ ● 3 ● 1 ⏳1 │ q quit / search f filter s sort ⏎ detail         │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
