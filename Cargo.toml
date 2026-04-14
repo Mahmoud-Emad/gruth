@@ -1,0 +1,28 @@
+[package]
+name = "gruth"
+version = "0.2.0"
+edition = "2021"
+description = "A TUI dashboard for monitoring and syncing multiple git repositories"
+license = "MIT"
+repository = "https://github.com/mik-tf/gruth"
+readme = "README.md"
+keywords = ["git", "tui", "terminal", "monitor", "dashboard"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+git2 = "0.19"
+chrono = "0.4"
+anyhow = "1"
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+dirs = "5"
+glob = "0.3"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
