@@ -14,7 +14,7 @@ ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
-git2 = "0.19"
+git2 = { version = "0.19", features = ["vendored-openssl", "vendored-libgit2"] }
 chrono = "0.4"
 anyhow = "1"
 toml = "0.8"
