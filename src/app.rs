@@ -1,3 +1,4 @@
+use crate::config::Theme;
 use crate::git_ops::{BranchEntry, CommitEntry, GitInfo, RepoDetails, RepoStatus};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -10,6 +11,7 @@ const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦
 pub enum InputMode {
     Normal,
     Search,
+    ThemePicker,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -102,6 +104,8 @@ pub struct RepoInfo {
     pub last_updated: Option<Instant>,
     pub error: Option<String>,
     pub fetching: bool,
+    pub pulling: bool,
+    pub pull_result: Option<Result<String, String>>,
 }
 
 impl RepoInfo {
@@ -132,6 +136,8 @@ impl RepoInfo {
             last_updated: None,
             error: None,
             fetching: true,
+            pulling: false,
+            pull_result: None,
         }
     }
 
@@ -146,6 +152,8 @@ impl RepoInfo {
         self.last_updated = Some(Instant::now());
         self.error = None;
         self.fetching = false;
+        self.pulling = false;
+        self.pull_result = None;
     }
 
     pub fn set_error(&mut self, err: String) {
@@ -187,6 +195,29 @@ impl DetailPane {
     }
 }
 
+// --- Toast Messages ---
+
+#[derive(Debug, Clone)]
+pub enum ToastLevel {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub message: String,
+    pub level: ToastLevel,
+    pub created: Instant,
+}
+
+impl Toast {
+    pub fn is_expired(&self) -> bool {
+        self.created.elapsed() > Duration::from_secs(5)
+    }
+}
+
 // --- AppState ---
 
 pub struct AppState {
@@ -213,10 +244,30 @@ pub struct AppState {
 
     // Detail pane
     pub detail_pane: Option<DetailPane>,
+
+    // Theme
+    pub theme: Theme,
+
+    // Notifications
+    pub notifications: bool,
+
+    // Theme picker
+    pub theme_picker_index: usize,
+    pub theme_before_preview: Option<Theme>,
+
+    // Toast messages
+    pub toasts: Vec<Toast>,
 }
 
 impl AppState {
-    pub fn new(scan_root: PathBuf, interval: Duration, stale_days: u64, sort_order: SortOrder) -> Self {
+    pub fn new(
+        scan_root: PathBuf,
+        interval: Duration,
+        stale_days: u64,
+        sort_order: SortOrder,
+        theme: Theme,
+        notifications: bool,
+    ) -> Self {
         Self {
             repos: Vec::new(),
             selected: 0,
@@ -233,27 +284,48 @@ impl AppState {
             filtered_indices: Vec::new(),
             sort_order,
             detail_pane: None,
+            theme,
+            notifications,
+            theme_picker_index: 0,
+            theme_before_preview: None,
+            toasts: Vec::new(),
         }
     }
 
     pub fn set_repos(&mut self, paths: Vec<PathBuf>) {
+        let count = paths.len();
         self.repos = paths
             .into_iter()
             .map(|p| RepoInfo::new(p, &self.scan_root))
             .collect();
         self.scanning = false;
         self.recompute_filtered();
+        if count > 0 {
+            self.toast(format!("Found {} repositories", count), ToastLevel::Info);
+        }
     }
 
-    pub fn update_repo(&mut self, path: &PathBuf, result: Result<GitInfo, String>) {
+    pub fn update_repo(&mut self, path: &PathBuf, result: Result<GitInfo, String>) -> Option<String> {
+        let mut notify_name = None;
         if let Some(repo) = self.repos.iter_mut().find(|r| &r.path == path) {
             match result {
-                Ok(info) => repo.update_from_git_info(info),
+                Ok(ref info) => {
+                    // Detect: was synced (behind=0), now behind
+                    if self.notifications
+                        && repo.last_updated.is_some()
+                        && repo.behind == 0
+                        && info.behind > 0
+                    {
+                        notify_name = Some(repo.display_name.clone());
+                    }
+                    repo.update_from_git_info(info.clone());
+                }
                 Err(err) => repo.set_error(err),
             }
         }
         self.pending_refreshes = self.pending_refreshes.saturating_sub(1);
         self.recompute_filtered();
+        notify_name
     }
 
     pub fn should_refresh(&self) -> bool {
@@ -316,11 +388,21 @@ impl AppState {
     pub fn cycle_filter(&mut self) {
         self.status_filter = self.status_filter.next();
         self.recompute_filtered();
+        let label = self.status_filter.label();
+        let count = self.filtered_indices.len();
+        self.toast(
+            format!("Filter: {} ({} repos)", label, count),
+            ToastLevel::Info,
+        );
     }
 
     pub fn cycle_sort(&mut self) {
         self.sort_order = self.sort_order.next();
         self.recompute_filtered();
+        self.toast(
+            format!("Sort: {}", self.sort_order.label()),
+            ToastLevel::Info,
+        );
     }
 
     pub fn recompute_filtered(&mut self) {
@@ -402,6 +484,117 @@ impl AppState {
 
     pub fn close_detail_pane(&mut self) {
         self.detail_pane = None;
+    }
+
+    // --- Pull ---
+
+    pub fn set_pulling(&mut self, path: &PathBuf) {
+        let display_name = self
+            .repos
+            .iter()
+            .find(|r| &r.path == path)
+            .map(|r| r.display_name.clone());
+
+        if let Some(repo) = self.repos.iter_mut().find(|r| &r.path == path) {
+            repo.pulling = true;
+            repo.pull_result = None;
+        }
+
+        if let Some(name) = display_name {
+            self.toast(format!("Pulling {}...", name), ToastLevel::Info);
+        }
+    }
+
+    pub fn set_pull_result(&mut self, path: &PathBuf, result: Result<String, String>) {
+        let display_name = self
+            .repos
+            .iter()
+            .find(|r| &r.path == path)
+            .map(|r| r.display_name.clone())
+            .unwrap_or_default();
+
+        if let Some(repo) = self.repos.iter_mut().find(|r| &r.path == path) {
+            repo.pulling = false;
+            repo.pull_result = Some(result.clone());
+        }
+
+        match result {
+            Ok(msg) => self.toast(
+                format!("{}: {}", display_name, msg),
+                ToastLevel::Success,
+            ),
+            Err(err) => self.toast(
+                format!("{}: {}", display_name, err),
+                ToastLevel::Error,
+            ),
+        }
+    }
+
+    // --- Theme Picker ---
+
+    pub fn open_theme_picker(&mut self) {
+        self.theme_before_preview = Some(self.theme.clone());
+        self.input_mode = InputMode::ThemePicker;
+
+        // Start on the currently cached theme, or 0
+        let presets = Theme::presets();
+        let cached = crate::config::load_cached_theme();
+        self.theme_picker_index = cached
+            .and_then(|name| presets.iter().position(|p| p.name == name))
+            .unwrap_or(0);
+    }
+
+    pub fn theme_picker_next(&mut self) {
+        let presets = Theme::presets();
+        if !presets.is_empty() {
+            self.theme_picker_index = (self.theme_picker_index + 1).min(presets.len() - 1);
+            self.theme = presets[self.theme_picker_index].theme.clone();
+        }
+    }
+
+    pub fn theme_picker_prev(&mut self) {
+        let presets = Theme::presets();
+        self.theme_picker_index = self.theme_picker_index.saturating_sub(1);
+        if let Some(preset) = presets.get(self.theme_picker_index) {
+            self.theme = preset.theme.clone();
+        }
+    }
+
+    pub fn theme_picker_confirm(&mut self) {
+        let presets = Theme::presets();
+        let name = presets
+            .get(self.theme_picker_index)
+            .map(|p| p.name)
+            .unwrap_or("Custom");
+        crate::config::save_cached_theme(name);
+        self.toast(format!("Theme: {}", name), ToastLevel::Success);
+        self.theme_before_preview = None;
+        self.input_mode = InputMode::Normal;
+    }
+
+    pub fn theme_picker_cancel(&mut self) {
+        if let Some(original) = self.theme_before_preview.take() {
+            self.theme = original;
+        }
+        self.input_mode = InputMode::Normal;
+    }
+
+    // --- Toasts ---
+
+    pub fn toast(&mut self, message: String, level: ToastLevel) {
+        self.toasts.push(Toast {
+            message,
+            level,
+            created: Instant::now(),
+        });
+    }
+
+    pub fn expire_toasts(&mut self) {
+        self.toasts.retain(|t| !t.is_expired());
+    }
+
+    pub fn active_toast(&self) -> Option<&Toast> {
+        self.toasts.last()
     }
 
     // --- Stats ---

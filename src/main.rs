@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod config;
+mod dir_picker;
 mod events;
 mod git_ops;
 mod scanner;
@@ -22,6 +23,12 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+/// Why the TUI exited.
+enum ExitReason {
+    Quit,
+    BackToPicker,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -31,20 +38,55 @@ async fn main() -> Result<()> {
     let interval_secs = args.interval.or(config.interval).unwrap_or(5);
     let stale_days = args.stale_days.or(config.stale_days).unwrap_or(30);
     let default_sort = SortOrder::from_str(config.default_sort.as_deref().unwrap_or("name"));
+    let theme = config::resolve_theme(&config);
+    let notifications = config.notifications.unwrap_or(true);
     let excluded = config.excluded_paths.unwrap_or_default();
 
-    let root = args.path.canonicalize().unwrap_or(args.path.clone());
-
     if args.sync {
+        let root = match args.path {
+            Some(p) => p.canonicalize().unwrap_or(p),
+            None => std::env::current_dir()?,
+        };
         return sync::run_sync(&root, depth, &excluded);
     }
 
-    run_tui(root, depth, interval_secs, stale_days, default_sort, excluded).await
+    // If --path was given, run TUI directly (no picker loop)
+    if let Some(p) = args.path {
+        let root = p.canonicalize().unwrap_or(p);
+        run_tui(root, depth, interval_secs, stale_days, default_sort.clone(), excluded, theme.clone(), notifications).await?;
+        return Ok(());
+    }
+
+    // Picker loop: picker → TUI → back to picker if user presses 'b'
+    loop {
+        let root = match dir_picker::run_picker()? {
+            Some(p) => p,
+            None => return Ok(()),
+        };
+
+        let reason = run_tui(
+            root,
+            depth,
+            interval_secs,
+            stale_days,
+            default_sort.clone(),
+            excluded.clone(),
+            theme.clone(),
+            notifications,
+        )
+        .await?;
+
+        match reason {
+            ExitReason::Quit => return Ok(()),
+            ExitReason::BackToPicker => continue,
+        }
+    }
 }
 
 enum RepoResult {
     ScanComplete(Vec<PathBuf>),
     RepoUpdated(PathBuf, Result<git_ops::GitInfo, String>),
+    PullComplete(PathBuf, Result<String, String>),
     DetailLoaded(PathBuf, Result<git_ops::RepoDetails, String>),
 }
 
@@ -55,7 +97,9 @@ async fn run_tui(
     stale_days: u64,
     default_sort: SortOrder,
     excluded: Vec<String>,
-) -> Result<()> {
+    theme: config::Theme,
+    notifications: bool,
+) -> Result<ExitReason> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -63,7 +107,7 @@ async fn run_tui(
     let mut terminal = ratatui::Terminal::new(backend)?;
 
     let interval = Duration::from_secs(interval_secs);
-    let mut app = AppState::new(root.clone(), interval, stale_days, default_sort);
+    let mut app = AppState::new(root.clone(), interval, stale_days, default_sort, theme, notifications);
     let mut events = EventHandler::new(Duration::from_millis(250));
     let (tx, mut rx) = mpsc::unbounded_channel::<RepoResult>();
 
@@ -75,6 +119,8 @@ async fn run_tui(
         let _ = scan_tx.send(RepoResult::ScanComplete(repos));
     });
 
+    let mut exit_reason = ExitReason::Quit;
+
     loop {
         terminal.draw(|f| ui::draw(f, &app))?;
 
@@ -83,11 +129,27 @@ async fn run_tui(
             match result {
                 RepoResult::ScanComplete(paths) => {
                     app.set_repos(paths);
-                    spawn_refresh_all(&app, &tx);
-                    app.mark_refreshing();
+                    if app.repos.is_empty() {
+                        // No repos found — allow going back
+                    } else {
+                        spawn_refresh_all(&app, &tx);
+                        app.mark_refreshing();
+                    }
                 }
                 RepoResult::RepoUpdated(path, info) => {
-                    app.update_repo(&path, info);
+                    if let Some(repo_name) = app.update_repo(&path, info) {
+                        send_notification(&repo_name);
+                    }
+                }
+                RepoResult::PullComplete(path, result) => {
+                    app.set_pull_result(&path, result);
+                    // Refresh the repo to get updated status
+                    let refresh_tx = tx.clone();
+                    let refresh_path = path.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let info = git_ops::get_repo_info(&refresh_path).map_err(|e| e.to_string());
+                        let _ = refresh_tx.send(RepoResult::RepoUpdated(refresh_path, info));
+                    });
                 }
                 RepoResult::DetailLoaded(path, details) => {
                     if let Ok(details) = details {
@@ -105,6 +167,21 @@ async fn run_tui(
                 match event? {
                     AppEvent::Key(key) => {
                         match app.input_mode {
+                            InputMode::ThemePicker => match key.code {
+                                KeyCode::Esc | KeyCode::Char('q') => {
+                                    app.theme_picker_cancel();
+                                }
+                                KeyCode::Enter => {
+                                    app.theme_picker_confirm();
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    app.theme_picker_prev();
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    app.theme_picker_next();
+                                }
+                                _ => {}
+                            },
                             InputMode::Search => match key.code {
                                 KeyCode::Esc => {
                                     app.search_query.clear();
@@ -126,6 +203,10 @@ async fn run_tui(
                             },
                             InputMode::Normal => match (key.code, key.modifiers) {
                                 (KeyCode::Char('c'), KeyModifiers::CONTROL) => break,
+                                (KeyCode::Char('b'), _) => {
+                                    exit_reason = ExitReason::BackToPicker;
+                                    break;
+                                }
                                 (KeyCode::Char('q'), _) => {
                                     if app.detail_pane.is_some() {
                                         app.close_detail_pane();
@@ -150,11 +231,49 @@ async fn run_tui(
                                     app.input_mode = InputMode::Search;
                                     app.search_query.clear();
                                 }
+                                (KeyCode::Char('t'), _) => app.open_theme_picker(),
                                 (KeyCode::Char('f'), _) => app.cycle_filter(),
                                 (KeyCode::Char('s'), _) => app.cycle_sort(),
+                                (KeyCode::Char('p'), _) => {
+                                    if let Some(repo) = app.selected_repo() {
+                                        if repo.pulling {
+                                            app.toast("Already pulling...".to_string(), app::ToastLevel::Warning);
+                                        } else if repo.status == git_ops::RepoStatus::Dirty {
+                                            app.toast(
+                                                format!("{}: dirty — commit or stash first", repo.display_name),
+                                                app::ToastLevel::Warning,
+                                            );
+                                        } else if repo.status == git_ops::RepoStatus::Conflicts {
+                                            app.toast(
+                                                format!("{}: has conflicts — resolve first", repo.display_name),
+                                                app::ToastLevel::Error,
+                                            );
+                                        } else if repo.behind == 0 {
+                                            app.toast(
+                                                format!("{}: already up to date", repo.display_name),
+                                                app::ToastLevel::Info,
+                                            );
+                                        } else if repo.error.is_some() {
+                                            app.toast(
+                                                format!("{}: repo has errors", repo.display_name),
+                                                app::ToastLevel::Error,
+                                            );
+                                        } else {
+                                            let path = repo.path.clone();
+                                            app.set_pulling(&path);
+                                            let pull_tx = tx.clone();
+                                            tokio::task::spawn_blocking(move || {
+                                                let result = git_ops::pull_current_branch(&path)
+                                                    .map_err(|e| e.to_string());
+                                                let _ = pull_tx.send(RepoResult::PullComplete(path, result));
+                                            });
+                                        }
+                                    }
+                                }
                                 (KeyCode::Char('r'), _) => {
                                     spawn_refresh_all(&app, &tx);
                                     app.mark_refreshing();
+                                    app.toast("Refreshing all repos...".to_string(), app::ToastLevel::Info);
                                 }
                                 (KeyCode::Enter, _) => {
                                     if app.detail_pane.is_some() {
@@ -194,7 +313,8 @@ async fn run_tui(
                     }
                     AppEvent::Tick => {
                         app.tick();
-                        if app.should_refresh() {
+                        app.expire_toasts();
+                        if app.should_refresh() && !app.repos.is_empty() {
                             spawn_refresh_all(&app, &tx);
                             app.mark_refreshing();
                         }
@@ -207,7 +327,7 @@ async fn run_tui(
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
-    Ok(())
+    Ok(exit_reason)
 }
 
 fn spawn_refresh_all(app: &AppState, tx: &mpsc::UnboundedSender<RepoResult>) {
@@ -220,4 +340,13 @@ fn spawn_refresh_all(app: &AppState, tx: &mpsc::UnboundedSender<RepoResult>) {
             let _ = tx.send(RepoResult::RepoUpdated(path, result));
         });
     }
+}
+
+fn send_notification(repo_name: &str) {
+    let _ = notify_rust::Notification::new()
+        .summary("gruth — repo behind")
+        .body(&format!("{} has new commits to pull", repo_name))
+        .icon("git")
+        .timeout(notify_rust::Timeout::Milliseconds(5000))
+        .show();
 }

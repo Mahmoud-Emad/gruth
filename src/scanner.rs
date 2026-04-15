@@ -26,7 +26,8 @@ fn scan_recursive(
         return;
     }
 
-    if dir.join(".git").exists() {
+    // Skip the root directory itself — only find repos inside it
+    if depth > 0 && dir.join(".git").exists() {
         repos.push(dir.to_path_buf());
     }
 

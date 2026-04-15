@@ -2,7 +2,7 @@
 name = "gruth"
 version = "0.2.0"
 edition = "2021"
-description = "A TUI dashboard for monitoring and syncing multiple git repositories"
+description = "gruth — Git Repository UTility Helper. A TUI dashboard for monitoring and syncing multiple git repositories."
 license = "MIT"
 repository = "https://github.com/mik-tf/gruth"
 readme = "README.md"
@@ -21,6 +21,7 @@ toml = "0.8"
 serde = { version = "1", features = ["derive"] }
 dirs = "5"
 glob = "0.3"
+notify-rust = "4"
 
 [profile.release]
 lto = true
