@@ -1,3 +1,5 @@
+//! TUI rendering — header, table, detail pane, footer, overlays.
+
 use crate::app::{AppState, InputMode, StatusFilter, SortOrder, Toast, ToastLevel};
 use crate::config::Theme;
 use crate::git_ops::RepoStatus;
@@ -503,6 +505,8 @@ fn draw_footer(f: &mut Frame, app: &AppState, area: Rect) {
         spans.push(Span::styled(" sort ", Style::default().fg(t.dim)));
         spans.push(Span::styled("p", Style::default().fg(t.accent).bold()));
         spans.push(Span::styled(" pull ", Style::default().fg(t.dim)));
+        spans.push(Span::styled("P", Style::default().fg(t.accent).bold()));
+        spans.push(Span::styled(" pull all ", Style::default().fg(t.dim)));
         spans.push(Span::styled("t", Style::default().fg(t.accent).bold()));
         spans.push(Span::styled(" theme ", Style::default().fg(t.dim)));
         spans.push(Span::styled("⏎", Style::default().fg(t.accent).bold()));

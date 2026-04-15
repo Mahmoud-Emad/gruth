@@ -1,3 +1,5 @@
+//! Terminal event handling — converts crossterm events into application events.
+
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyEvent};
 use std::time::Duration;
@@ -24,8 +26,7 @@ impl EventHandler {
                     tokio::task::block_in_place(|| event::poll(tick_rate).unwrap_or(false));
 
                 if has_event {
-                    let ev = tokio::task::block_in_place(|| event::read());
-                    if let Ok(Event::Key(key)) = ev {
+                    if let Ok(Event::Key(key)) = tokio::task::block_in_place(|| event::read()) {
                         if event_tx.send(AppEvent::Key(key)).is_err() {
                             break;
                         }

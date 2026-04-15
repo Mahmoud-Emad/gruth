@@ -1,3 +1,5 @@
+//! Git operations via libgit2 — status, fetch, pull, and detail queries.
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use git2::{

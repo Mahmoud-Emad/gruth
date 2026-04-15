@@ -1,3 +1,5 @@
+//! Interactive directory picker — browse the filesystem to select a root directory.
+
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::{

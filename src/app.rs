@@ -1,3 +1,5 @@
+//! Application state — all data structures and state transitions for the TUI.
+
 use crate::config::Theme;
 use crate::git_ops::{BranchEntry, CommitEntry, GitInfo, RepoDetails, RepoStatus};
 use std::path::PathBuf;

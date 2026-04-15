@@ -1,7 +1,10 @@
+//! Recursive git repository discovery.
+
 use glob::Pattern;
 use std::path::{Path, PathBuf};
 
 /// Recursively discover git repositories under `root` up to `max_depth` levels deep.
+/// The root directory itself is excluded from results.
 /// Directories matching any pattern in `excluded` are skipped.
 pub fn scan_repos(root: &Path, max_depth: usize, excluded: &[String]) -> Vec<PathBuf> {
     let mut repos = Vec::new();
@@ -26,7 +29,7 @@ fn scan_recursive(
         return;
     }
 
-    // Skip the root directory itself — only find repos inside it
+    // Only record child repos, not the root itself
     if depth > 0 && dir.join(".git").exists() {
         repos.push(dir.to_path_buf());
     }
@@ -44,6 +47,7 @@ fn scan_recursive(
 
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
+
         if name_str.starts_with('.') {
             continue;
         }

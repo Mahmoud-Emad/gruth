@@ -1,3 +1,8 @@
+//! Configuration loading, theme definitions, and theme caching.
+//!
+//! Config file: `~/.config/gruth/config.toml`
+//! Theme cache: `~/.cache/gruth/theme`
+
 use ratatui::style::Color;
 use serde::Deserialize;
 
