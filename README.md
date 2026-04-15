@@ -1,26 +1,5 @@
 # gruth
 
-```
-              ___
-             /   \
-            |  o  |
-            |  _  |
-           /|  |  |\
-          / |  |  | \
-         /  |__|__|  \
-        / /||      ||\ \
-       / / ||      || \ \
-      /  / ||      ||  \  \
-     /__/  ||______||   \__\
-            |      |
-            |  ||  |
-            |  ||  |
-           _|  ||  |_
-          |__________| 
-
-   I am gruth.
-```
-
 **<ins>G</ins>it <ins>R</ins>epository <ins>UT</ins>ility <ins>H</ins>elper** — a TUI dashboard for monitoring and syncing multiple git repositories.
 
 ```
