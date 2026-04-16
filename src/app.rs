@@ -14,6 +14,8 @@ pub enum InputMode {
     Normal,
     Search,
     ThemePicker,
+    Help,
+    ErrorInfo,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -259,6 +261,12 @@ pub struct AppState {
 
     // Toast messages
     pub toasts: Vec<Toast>,
+
+    // Error info overlay
+    pub error_info_text: Option<String>,
+
+    // Help overlay scroll
+    pub help_scroll: usize,
 }
 
 impl AppState {
@@ -291,6 +299,8 @@ impl AppState {
             theme_picker_index: 0,
             theme_before_preview: None,
             toasts: Vec::new(),
+            error_info_text: None,
+            help_scroll: 0,
         }
     }
 
@@ -305,6 +315,47 @@ impl AppState {
         if count > 0 {
             self.toast(format!("Found {} repositories", count), ToastLevel::Info);
         }
+    }
+
+    /// Reconcile the repo list with a fresh filesystem scan.
+    /// Removes repos whose directories no longer exist, adds newly discovered ones,
+    /// and preserves state (status, branch, etc.) for repos that are still present.
+    /// Returns paths of newly added repos that need an initial refresh.
+    pub fn reconcile_repos(&mut self, current_paths: Vec<PathBuf>) -> Vec<PathBuf> {
+        use std::collections::HashSet;
+
+        let current_set: HashSet<&PathBuf> = current_paths.iter().collect();
+        let existing_set: HashSet<PathBuf> = self.repos.iter().map(|r| r.path.clone()).collect();
+
+        // Remove repos that no longer exist on disk
+        let before = self.repos.len();
+        self.repos.retain(|r| current_set.contains(&r.path));
+        let removed = before - self.repos.len();
+
+        // Add repos that are new
+        let new_paths: Vec<PathBuf> = current_paths
+            .into_iter()
+            .filter(|p| !existing_set.contains(p))
+            .collect();
+        let added = new_paths.len();
+
+        for p in &new_paths {
+            self.repos.push(RepoInfo::new(p.clone(), &self.scan_root));
+        }
+
+        if removed > 0 || added > 0 {
+            let mut parts = Vec::new();
+            if added > 0 {
+                parts.push(format!("+{} new", added));
+            }
+            if removed > 0 {
+                parts.push(format!("-{} removed", removed));
+            }
+            self.toast(format!("Repos updated: {}", parts.join(", ")), ToastLevel::Info);
+        }
+
+        self.recompute_filtered();
+        new_paths
     }
 
     pub fn update_repo(&mut self, path: &PathBuf, result: Result<GitInfo, String>) -> Option<String> {
@@ -578,6 +629,33 @@ impl AppState {
         if let Some(original) = self.theme_before_preview.take() {
             self.theme = original;
         }
+        self.input_mode = InputMode::Normal;
+    }
+
+    // --- Help ---
+
+    pub fn open_help(&mut self) {
+        self.help_scroll = 0;
+        self.input_mode = InputMode::Help;
+    }
+
+    pub fn close_help(&mut self) {
+        self.input_mode = InputMode::Normal;
+    }
+
+    // --- Error Info ---
+
+    pub fn show_error_info(&mut self) {
+        if let Some(repo) = self.selected_repo() {
+            if let Some(ref err) = repo.error {
+                self.error_info_text = Some(err.clone());
+                self.input_mode = InputMode::ErrorInfo;
+            }
+        }
+    }
+
+    pub fn close_error_info(&mut self) {
+        self.error_info_text = None;
         self.input_mode = InputMode::Normal;
     }
 

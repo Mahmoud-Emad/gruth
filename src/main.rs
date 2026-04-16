@@ -36,6 +36,7 @@ enum ExitReason {
 
 enum RepoResult {
     ScanComplete(Vec<PathBuf>),
+    RescanComplete(Vec<PathBuf>),
     RepoUpdated(PathBuf, Result<git_ops::GitInfo, String>),
     PullComplete(PathBuf, Result<String, String>),
     DetailLoaded(PathBuf, Result<git_ops::RepoDetails, String>),
@@ -120,8 +121,9 @@ async fn run_tui(
     // Kick off background repo scan
     let scan_tx = tx.clone();
     let scan_root = root.clone();
+    let scan_excluded = excluded.clone();
     tokio::task::spawn_blocking(move || {
-        let repos = scanner::scan_repos(&scan_root, max_depth, &excluded);
+        let repos = scanner::scan_repos(&scan_root, max_depth, &scan_excluded);
         let _ = scan_tx.send(RepoResult::ScanComplete(repos));
     });
 
@@ -144,7 +146,7 @@ async fn run_tui(
                         app.tick();
                         app.expire_toasts();
                         if app.should_refresh() && !app.repos.is_empty() {
-                            spawn_refresh_all(&app, &tx);
+                            spawn_rescan(&root, max_depth, &excluded, &tx);
                             app.mark_refreshing();
                         }
                     }
@@ -171,6 +173,13 @@ fn handle_result(app: &mut AppState, result: RepoResult, tx: &mpsc::UnboundedSen
                 spawn_refresh_all(app, tx);
                 app.mark_refreshing();
             }
+        }
+        RepoResult::RescanComplete(paths) => {
+            app.reconcile_repos(paths);
+            // Refresh all repos (existing + new)
+            spawn_refresh_all(app, tx);
+            // New repos need their pending count added
+            app.pending_refreshes = app.repos.len();
         }
         RepoResult::RepoUpdated(path, info) => {
             if let Some(repo_name) = app.update_repo(&path, info) {
@@ -205,10 +214,32 @@ fn handle_key(
     tx: &mpsc::UnboundedSender<RepoResult>,
 ) -> Option<ExitReason> {
     match app.input_mode {
+        InputMode::Help => handle_key_help(app, key.code),
+        InputMode::ErrorInfo => handle_key_error_info(app, key.code),
         InputMode::ThemePicker => handle_key_theme_picker(app, key.code),
         InputMode::Search => handle_key_search(app, key.code),
         InputMode::Normal => handle_key_normal(app, key.code, key.modifiers, tx),
     }
+}
+
+fn handle_key_help(app: &mut AppState, code: KeyCode) -> Option<ExitReason> {
+    match code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => app.close_help(),
+        KeyCode::Up | KeyCode::Char('k') => app.help_scroll = app.help_scroll.saturating_sub(1),
+        KeyCode::Down | KeyCode::Char('j') => app.help_scroll += 1,
+        _ => {}
+    }
+    None
+}
+
+fn handle_key_error_info(app: &mut AppState, code: KeyCode) -> Option<ExitReason> {
+    match code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('i') | KeyCode::Enter => {
+            app.close_error_info()
+        }
+        _ => {}
+    }
+    None
 }
 
 fn handle_key_theme_picker(app: &mut AppState, code: KeyCode) -> Option<ExitReason> {
@@ -272,6 +303,8 @@ fn handle_key_normal(
         }
 
         // Modes
+        (KeyCode::Char('?'), _) => app.open_help(),
+        (KeyCode::Char('i'), _) => app.show_error_info(),
         (KeyCode::Char('/'), _) => {
             app.input_mode = InputMode::Search;
             app.search_query.clear();
@@ -378,6 +411,21 @@ fn handle_pull_all(app: &mut AppState, tx: &mpsc::UnboundedSender<RepoResult>) {
 // ---------------------------------------------------------------------------
 // Background tasks
 // ---------------------------------------------------------------------------
+
+fn spawn_rescan(
+    root: &PathBuf,
+    max_depth: usize,
+    excluded: &[String],
+    tx: &mpsc::UnboundedSender<RepoResult>,
+) {
+    let root = root.clone();
+    let excluded = excluded.to_vec();
+    let tx = tx.clone();
+    tokio::task::spawn_blocking(move || {
+        let paths = scanner::scan_repos(&root, max_depth, &excluded);
+        let _ = tx.send(RepoResult::RescanComplete(paths));
+    });
+}
 
 fn spawn_refresh_all(app: &AppState, tx: &mpsc::UnboundedSender<RepoResult>) {
     for repo in &app.repos {

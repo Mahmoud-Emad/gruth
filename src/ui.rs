@@ -42,14 +42,15 @@ pub fn draw(f: &mut Frame, app: &AppState) {
         draw_footer(f, app, chunks[2]);
     }
 
-    // Toast overlay
+    // Overlays (order matters — last drawn is on top)
     if let Some(toast) = app.active_toast() {
         draw_toast(f, app, toast);
     }
-
-    // Theme picker overlay
-    if app.input_mode == InputMode::ThemePicker {
-        draw_theme_picker(f, app);
+    match app.input_mode {
+        InputMode::ThemePicker => draw_theme_picker(f, app),
+        InputMode::Help => draw_help(f, app),
+        InputMode::ErrorInfo => draw_error_info(f, app),
+        _ => {}
     }
 }
 
@@ -495,22 +496,16 @@ fn draw_footer(f: &mut Frame, app: &AppState, area: Rect) {
     } else {
         spans.push(Span::styled(" q", Style::default().fg(t.accent).bold()));
         spans.push(Span::styled(" quit ", Style::default().fg(t.dim)));
-        spans.push(Span::styled("b", Style::default().fg(t.accent).bold()));
-        spans.push(Span::styled(" back ", Style::default().fg(t.dim)));
         spans.push(Span::styled("/", Style::default().fg(t.accent).bold()));
         spans.push(Span::styled(" search ", Style::default().fg(t.dim)));
         spans.push(Span::styled("f", Style::default().fg(t.accent).bold()));
         spans.push(Span::styled(" filter ", Style::default().fg(t.dim)));
-        spans.push(Span::styled("s", Style::default().fg(t.accent).bold()));
-        spans.push(Span::styled(" sort ", Style::default().fg(t.dim)));
         spans.push(Span::styled("p", Style::default().fg(t.accent).bold()));
         spans.push(Span::styled(" pull ", Style::default().fg(t.dim)));
-        spans.push(Span::styled("P", Style::default().fg(t.accent).bold()));
-        spans.push(Span::styled(" pull all ", Style::default().fg(t.dim)));
-        spans.push(Span::styled("t", Style::default().fg(t.accent).bold()));
-        spans.push(Span::styled(" theme ", Style::default().fg(t.dim)));
         spans.push(Span::styled("⏎", Style::default().fg(t.accent).bold()));
-        spans.push(Span::styled(" detail", Style::default().fg(t.dim)));
+        spans.push(Span::styled(" detail ", Style::default().fg(t.dim)));
+        spans.push(Span::styled("?", Style::default().fg(t.accent).bold()));
+        spans.push(Span::styled(" help", Style::default().fg(t.dim)));
     }
 
     let block = Block::default()
@@ -622,4 +617,151 @@ fn draw_toast(f: &mut Frame, app: &AppState, toast: &Toast) {
     ]);
 
     f.render_widget(Paragraph::new(line).block(block), toast_area);
+}
+
+fn draw_help(f: &mut Frame, app: &AppState) {
+    let t = &app.theme;
+    let area = f.area();
+
+    let sections: Vec<(&str, Vec<(&str, &str)>)> = vec![
+        ("Navigation", vec![
+            ("↑ / k", "Move up"),
+            ("↓ / j", "Move down"),
+            ("Enter", "Open / close detail pane"),
+            ("b", "Back to directory picker"),
+        ]),
+        ("Actions", vec![
+            ("p", "Pull selected repo (clean + behind only)"),
+            ("P", "Pull all eligible repos"),
+            ("r", "Force refresh all repos"),
+            ("i", "Show error details for selected repo"),
+        ]),
+        ("Search & Filter", vec![
+            ("/", "Search repos by name"),
+            ("f", "Cycle filter (all/clean/dirty/behind/ahead/errors/stale)"),
+            ("s", "Cycle sort (name/status/commit/behind)"),
+            ("Esc", "Clear filter/search, close pane, or quit"),
+        ]),
+        ("Appearance", vec![
+            ("t", "Open theme picker"),
+        ]),
+        ("General", vec![
+            ("q", "Quit (or close active pane)"),
+            ("Ctrl+C", "Force quit"),
+            ("?", "Toggle this help screen"),
+        ]),
+    ];
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(""));
+
+    for (section, keys) in &sections {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", section),
+            Style::default().fg(t.accent).bold(),
+        )));
+        lines.push(Line::from(""));
+
+        for (key, desc) in keys {
+            let pad = 14usize.saturating_sub(key.len());
+            lines.push(Line::from(vec![
+                Span::styled(format!("    {}", key), Style::default().fg(Color::White).bold()),
+                Span::raw(" ".repeat(pad)),
+                Span::styled(*desc, Style::default().fg(t.dim)),
+            ]));
+        }
+
+        lines.push(Line::from(""));
+    }
+
+    lines.push(Line::from(vec![
+        Span::styled("    Press ", Style::default().fg(t.dim)),
+        Span::styled("?", Style::default().fg(t.accent).bold()),
+        Span::styled(" or ", Style::default().fg(t.dim)),
+        Span::styled("Esc", Style::default().fg(t.accent).bold()),
+        Span::styled(" to close", Style::default().fg(t.dim)),
+    ]));
+
+    let picker_width = 60u16.min(area.width.saturating_sub(4));
+    let picker_height = (lines.len() as u16 + 2).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(picker_width)) / 2;
+    let y = (area.height.saturating_sub(picker_height)) / 2;
+    let help_area = Rect::new(x, y, picker_width, picker_height);
+
+    f.render_widget(Clear, help_area);
+
+    let block = Block::default()
+        .title(" Keyboard Shortcuts ")
+        .title_style(Style::default().fg(t.accent).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(t.accent));
+
+    let widget = Paragraph::new(lines)
+        .block(block)
+        .scroll((app.help_scroll as u16, 0));
+
+    f.render_widget(widget, help_area);
+}
+
+fn draw_error_info(f: &mut Frame, app: &AppState) {
+    let t = &app.theme;
+    let area = f.area();
+
+    let error_text = match &app.error_info_text {
+        Some(text) => text.clone(),
+        None => return,
+    };
+
+    let repo_name = app
+        .selected_repo()
+        .map(|r| r.display_name.clone())
+        .unwrap_or_default();
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("  Repo: ", Style::default().fg(t.dim)),
+        Span::styled(&repo_name, Style::default().fg(Color::White).bold()),
+    ]));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Error:",
+        Style::default().fg(t.error).bold(),
+    )));
+    lines.push(Line::from(""));
+
+    // Wrap error text into lines
+    for line in error_text.lines() {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", line),
+            Style::default().fg(Color::White),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("  Press ", Style::default().fg(t.dim)),
+        Span::styled("Esc", Style::default().fg(t.accent).bold()),
+        Span::styled(" to close", Style::default().fg(t.dim)),
+    ]));
+
+    let picker_width = 60u16.min(area.width.saturating_sub(4));
+    let picker_height = (lines.len() as u16 + 2).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(picker_width)) / 2;
+    let y = (area.height.saturating_sub(picker_height)) / 2;
+    let error_area = Rect::new(x, y, picker_width, picker_height);
+
+    f.render_widget(Clear, error_area);
+
+    let block = Block::default()
+        .title(" Error Info ")
+        .title_style(Style::default().fg(t.error).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(t.error));
+
+    let widget = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
+
+    f.render_widget(widget, error_area);
 }

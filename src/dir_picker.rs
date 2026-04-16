@@ -10,7 +10,7 @@ use ratatui::{
     Frame,
 };
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const MAX_ENTRIES: usize = 500;
 
@@ -34,7 +34,6 @@ pub struct DirPicker {
     entries: Vec<DirEntry>,
     selected: usize,
     show_hidden: bool,
-    scroll_offset: usize,
 }
 
 impl DirPicker {
@@ -44,13 +43,16 @@ impl DirPicker {
             entries: Vec::new(),
             selected: 0,
             show_hidden: false,
-            scroll_offset: 0,
+
         };
         picker.refresh_entries();
         picker
     }
 
     fn refresh_entries(&mut self) {
+        // Remember currently selected name to restore position after refresh
+        let selected_name = self.entries.get(self.selected).map(|e| e.name.clone());
+
         self.entries.clear();
 
         // Canonicalize to resolve any symlinks in the current path
@@ -123,8 +125,17 @@ impl DirPicker {
         });
 
         self.entries = dirs;
-        self.selected = 0;
-        self.scroll_offset = 0;
+
+        // Restore selection to the previously selected entry, or clamp
+        if let Some(ref name) = selected_name {
+            if let Some(pos) = self.entries.iter().position(|e| &e.name == name) {
+                self.selected = pos;
+            } else {
+                self.selected = self.selected.min(self.entries.len().saturating_sub(1));
+            }
+        } else {
+            self.selected = 0;
+        }
     }
 
     fn try_read_current(&mut self) -> bool {
@@ -201,8 +212,16 @@ pub fn run_picker() -> Result<Option<PathBuf>> {
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
 
+    let mut last_refresh = Instant::now();
+
     let result = loop {
         terminal.draw(|f| draw_picker(f, &picker))?;
+
+        // Auto-refresh directory listing every 2 seconds
+        if last_refresh.elapsed() >= Duration::from_secs(2) {
+            picker.refresh_entries();
+            last_refresh = Instant::now();
+        }
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
