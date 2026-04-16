@@ -1,6 +1,6 @@
 //! Command-line argument definitions.
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -13,6 +13,9 @@ use std::path::PathBuf;
                   branch, status, ahead/behind, and last commit age for each repo."
 )]
 pub struct Args {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     /// Fetch and pull all clean repos, then exit
     #[arg(long)]
     pub sync: bool,
@@ -32,4 +35,12 @@ pub struct Args {
     /// Days without commits before a repo is considered stale
     #[arg(long)]
     pub stale_days: Option<u64>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Show version and git commit hash
+    Version,
+    /// Update gruth to the latest release
+    Update,
 }

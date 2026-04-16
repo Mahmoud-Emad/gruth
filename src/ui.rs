@@ -65,7 +65,7 @@ fn draw_header(f: &mut Frame, app: &AppState, area: Rect) {
         Span::styled("● idle", Style::default().fg(t.clean))
     };
 
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled(" gruth", Style::default().fg(t.accent).bold()),
         Span::styled(" │ ", Style::default().fg(t.border)),
         Span::styled("Git Repository UTility Helper", Style::default().fg(t.dim)),
@@ -73,7 +73,18 @@ fn draw_header(f: &mut Frame, app: &AppState, area: Rect) {
         Span::styled(format!("v{}", env!("CARGO_PKG_VERSION")), Style::default().fg(t.dim)),
         Span::styled(" │ ", Style::default().fg(t.border)),
         status,
-    ]);
+    ];
+
+    if let Some(ref version) = app.update_available {
+        let v = version.strip_prefix('v').unwrap_or(version);
+        spans.push(Span::styled(" │ ", Style::default().fg(t.border)));
+        spans.push(Span::styled(
+            format!("↑ {} available", v),
+            Style::default().fg(t.dirty).bold(),
+        ));
+    }
+
+    let line = Line::from(spans);
 
     let block = Block::default()
         .borders(Borders::ALL)

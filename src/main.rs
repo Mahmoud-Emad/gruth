@@ -13,6 +13,7 @@ mod git_ops;
 mod scanner;
 mod sync;
 mod ui;
+mod update;
 
 use anyhow::Result;
 use app::{AppState, InputMode, SortOrder, ToastLevel};
@@ -40,11 +41,24 @@ enum RepoResult {
     RepoUpdated(PathBuf, Result<git_ops::GitInfo, String>),
     PullComplete(PathBuf, Result<String, String>),
     DetailLoaded(PathBuf, Result<git_ops::RepoDetails, String>),
+    UpdateAvailable(String),
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+
+    // Handle subcommands first
+    if let Some(cmd) = args.command {
+        return match cmd {
+            cli::Command::Version => {
+                update::print_version();
+                Ok(())
+            }
+            cli::Command::Update => update::run_update(),
+        };
+    }
+
     let config = config::Config::load();
 
     let depth = args.depth.or(config.depth).unwrap_or(10);
@@ -127,6 +141,16 @@ async fn run_tui(
         let _ = scan_tx.send(RepoResult::ScanComplete(repos));
     });
 
+    // Background update check
+    let update_tx = tx.clone();
+    tokio::task::spawn_blocking(move || {
+        if let Ok(latest) = update::check_latest_version() {
+            if update::is_newer(update::current_version(), &latest) {
+                let _ = update_tx.send(RepoResult::UpdateAvailable(latest));
+            }
+        }
+    });
+
     let exit_reason = loop {
         terminal.draw(|f| ui::draw(f, &app))?;
 
@@ -200,6 +224,14 @@ fn handle_result(app: &mut AppState, result: RepoResult, tx: &mpsc::UnboundedSen
                     app.open_detail_pane(details);
                 }
             }
+        }
+        RepoResult::UpdateAvailable(version) => {
+            let v = version.strip_prefix('v').unwrap_or(&version);
+            app.toast(
+                format!("Update available: {} → run `gruth update`", v),
+                ToastLevel::Info,
+            );
+            app.update_available = Some(version);
         }
     }
 }

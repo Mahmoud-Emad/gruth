@@ -78,7 +78,21 @@ gruth --sync
 
 # Sync a specific directory
 gruth --sync -p ~/projects
+
+# Show version and commit hash
+gruth version
+
+# Self-update to the latest release
+gruth update
 ```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `gruth` | Launch TUI (with directory picker) |
+| `gruth version` | Show version and git commit hash |
+| `gruth update` | Self-update to the latest GitHub release |
 
 ## Options
 
@@ -180,6 +194,11 @@ Press `i` on a repo with errors to see the full error message in a centered over
 
 ### Help screen
 Press `?` to see all keyboard shortcuts organized by category. Scrollable with `j`/`k`.
+
+### Self-update
+Run `gruth update` to download and install the latest release from GitHub. The TUI also checks for updates on startup — if a newer version exists, you'll see `↑ 0.3.0 available` in the header bar and a toast notification prompting you to run `gruth update`.
+
+Run `gruth version` to see the current version and git commit hash.
 
 ### Toast notifications
 Actions show color-coded feedback messages that auto-dismiss after 5 seconds:

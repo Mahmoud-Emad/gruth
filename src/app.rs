@@ -267,6 +267,9 @@ pub struct AppState {
 
     // Help overlay scroll
     pub help_scroll: usize,
+
+    // Update available (latest version tag, e.g. "v0.3.0")
+    pub update_available: Option<String>,
 }
 
 impl AppState {
@@ -301,6 +304,7 @@ impl AppState {
             toasts: Vec::new(),
             error_info_text: None,
             help_scroll: 0,
+            update_available: None,
         }
     }
 
