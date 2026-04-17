@@ -1,6 +1,8 @@
 //! Self-update — check for new releases and replace the current binary.
 
 use anyhow::{bail, Context, Result};
+use std::io::Read;
+use std::path::Path;
 
 const GITHUB_REPO: &str = "Mahmoud-Emad/gruth";
 const API_URL: &str = "https://api.github.com/repos/Mahmoud-Emad/gruth/releases/latest";
@@ -69,22 +71,81 @@ fn asset_name() -> Result<&'static str> {
     }
 }
 
+fn log_step(msg: &str) {
+    println!("  \x1b[36m→\x1b[0m {}", msg);
+}
+
+fn log_ok(msg: &str) {
+    println!("  \x1b[32m✓\x1b[0m {}", msg);
+}
+
+fn log_info(msg: &str) {
+    println!("  \x1b[90m  {}\x1b[0m", msg);
+}
+
+/// Check if we can write to the binary's directory.
+fn needs_sudo(path: &Path) -> bool {
+    let dir = path.parent().unwrap_or(path);
+    let test_file = dir.join(".gruth-write-test");
+    match std::fs::write(&test_file, b"") {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&test_file);
+            false
+        }
+        Err(_) => true,
+    }
+}
+
+/// Re-run the update via sudo.
+fn run_with_sudo(tmp_binary: &Path, target: &Path) -> Result<()> {
+    log_step("Elevated permissions required — running sudo...");
+    log_info(&format!("sudo cp {} {}", tmp_binary.display(), target.display()));
+    println!();
+
+    let status = std::process::Command::new("sudo")
+        .args(["cp", &tmp_binary.to_string_lossy(), &target.to_string_lossy()])
+        .status()
+        .context("Failed to run sudo")?;
+
+    if !status.success() {
+        bail!("sudo cp failed with exit code {}", status.code().unwrap_or(-1));
+    }
+
+    // Set permissions
+    let _ = std::process::Command::new("sudo")
+        .args(["chmod", "+x", &target.to_string_lossy()])
+        .status();
+
+    Ok(())
+}
+
 /// Download the latest release and replace the current binary.
 pub fn run_update() -> Result<()> {
-    println!("  {}", version_string());
+    println!();
+    println!("  \x1b[1mgruth self-update\x1b[0m");
+    println!("  \x1b[90m─────────────────────────────────────\x1b[0m");
+    println!();
+
+    // Current version
+    log_info(&format!("Current: {}", version_string()));
     println!();
 
     // Check latest version
-    print!("  Checking for updates... ");
+    log_step("Checking GitHub for latest release...");
     let latest = check_latest_version()?;
     let latest_clean = latest.strip_prefix('v').unwrap_or(&latest);
 
     if !is_newer(current_version(), &latest) {
-        println!("already up to date ({})", latest);
+        log_ok(&format!("Already up to date ({})", latest));
+        println!();
         return Ok(());
     }
 
-    println!("new version available: {}", latest);
+    log_ok(&format!(
+        "New version available: {} → {}",
+        current_version(),
+        latest_clean
+    ));
     println!();
 
     // Determine asset
@@ -95,7 +156,9 @@ pub fn run_update() -> Result<()> {
     );
 
     // Download
-    print!("  Downloading {}... ", asset);
+    log_step(&format!("Downloading {}...", asset));
+    log_info(&download_url);
+
     let resp = ureq::get(&download_url)
         .call()
         .context("Failed to download release")?;
@@ -104,42 +167,87 @@ pub fn run_update() -> Result<()> {
     resp.into_reader()
         .read_to_end(&mut archive_bytes)
         .context("Failed to read download")?;
-    println!("done ({:.1} MB)", archive_bytes.len() as f64 / 1_048_576.0);
+
+    log_ok(&format!(
+        "Downloaded {:.1} MB",
+        archive_bytes.len() as f64 / 1_048_576.0
+    ));
+    println!();
 
     // Extract tar.gz
-    print!("  Extracting... ");
-    let decoder = flate2_extract(&archive_bytes)?;
-    println!("done");
-
-    // Replace current binary
-    let current_exe = std::env::current_exe().context("Cannot determine current executable path")?;
-    let backup = current_exe.with_extension("old");
-
-    print!("  Replacing {}... ", current_exe.display());
-
-    // Move current → backup, write new, remove backup
-    std::fs::rename(&current_exe, &backup)
-        .context("Failed to backup current binary. Try running with sudo.")?;
-
-    if let Err(e) = std::fs::write(&current_exe, &decoder) {
-        // Restore backup on failure
-        let _ = std::fs::rename(&backup, &current_exe);
-        bail!("Failed to write new binary: {}", e);
-    }
-
-    // Make executable on unix
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&current_exe, std::fs::Permissions::from_mode(0o755));
-    }
-
-    let _ = std::fs::remove_file(&backup);
-
-    println!("done");
+    log_step("Extracting binary from archive...");
+    let binary_data = extract_tar_gz(&archive_bytes)?;
+    log_ok(&format!(
+        "Extracted binary ({:.1} MB)",
+        binary_data.len() as f64 / 1_048_576.0
+    ));
     println!();
+
+    // Determine target path
+    let current_exe = std::env::current_exe().context("Cannot determine current executable path")?;
+    let current_exe = current_exe
+        .canonicalize()
+        .unwrap_or(current_exe);
+
+    log_step(&format!("Installing to {}...", current_exe.display()));
+
+    if needs_sudo(&current_exe) {
+        // Write to temp file, then sudo cp
+        let tmp_dir = std::env::temp_dir();
+        let tmp_path = tmp_dir.join("gruth-update-tmp");
+
+        std::fs::write(&tmp_path, &binary_data)
+            .context("Failed to write temporary binary")?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o755));
+        }
+
+        run_with_sudo(&tmp_path, &current_exe)?;
+
+        let _ = std::fs::remove_file(&tmp_path);
+    } else {
+        // Direct replace: backup → write → cleanup
+        let backup = current_exe.with_extension("old");
+
+        std::fs::rename(&current_exe, &backup)
+            .context("Failed to create backup of current binary")?;
+
+        if let Err(e) = std::fs::write(&current_exe, &binary_data) {
+            let _ = std::fs::rename(&backup, &current_exe);
+            bail!("Failed to write new binary: {}", e);
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&current_exe, std::fs::Permissions::from_mode(0o755));
+        }
+
+        let _ = std::fs::remove_file(&backup);
+    }
+
+    log_ok("Binary replaced successfully");
+    println!();
+
+    // Verify
+    log_step("Verifying installation...");
+    match std::process::Command::new(&current_exe).arg("version").output() {
+        Ok(output) => {
+            let version_out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            log_ok(&format!("Installed: {}", version_out));
+        }
+        Err(_) => {
+            log_ok(&format!("Updated to {}", latest_clean));
+        }
+    }
+
+    println!();
+    println!("  \x1b[90m─────────────────────────────────────\x1b[0m");
     println!(
-        "  \x1b[32m✓ Updated to {} successfully!\x1b[0m",
+        "  \x1b[32m✓ gruth updated to {} successfully!\x1b[0m",
         latest_clean
     );
     println!();
@@ -148,31 +256,24 @@ pub fn run_update() -> Result<()> {
 }
 
 /// Extract a single file named "gruth" from a tar.gz archive in memory.
-fn flate2_extract(data: &[u8]) -> Result<Vec<u8>> {
-    use std::io::Read;
-
-    // Decompress gzip
+fn extract_tar_gz(data: &[u8]) -> Result<Vec<u8>> {
     let mut decoder = flate2::read::GzDecoder::new(data);
     let mut tar_data = Vec::new();
     decoder
         .read_to_end(&mut tar_data)
         .context("Failed to decompress gzip")?;
 
-    // Parse tar — find the "gruth" entry
     let mut pos = 0;
     while pos + 512 <= tar_data.len() {
         let header = &tar_data[pos..pos + 512];
 
-        // End of archive (two zero blocks)
         if header.iter().all(|&b| b == 0) {
             break;
         }
 
-        // Extract filename (first 100 bytes, null-terminated)
         let name_end = header[..100].iter().position(|&b| b == 0).unwrap_or(100);
         let name = std::str::from_utf8(&header[..name_end]).unwrap_or("");
 
-        // Extract file size from octal field at offset 124, length 12
         let size_str = std::str::from_utf8(&header[124..136])
             .unwrap_or("0")
             .trim_matches(|c: char| c == '\0' || c == ' ');
@@ -181,13 +282,11 @@ fn flate2_extract(data: &[u8]) -> Result<Vec<u8>> {
         let data_start = pos + 512;
         let data_end = data_start + size;
 
-        // Strip path prefix — look for a file named "gruth"
         let file_name = name.rsplit('/').next().unwrap_or(name);
         if file_name == "gruth" && size > 0 && data_end <= tar_data.len() {
             return Ok(tar_data[data_start..data_end].to_vec());
         }
 
-        // Advance past header + data (rounded up to 512-byte blocks)
         let blocks = (size + 511) / 512;
         pos = data_start + blocks * 512;
     }
