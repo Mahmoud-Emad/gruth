@@ -1,11 +1,11 @@
 [package]
 name = "gruth"
-version = "0.2.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.70"
 description = "gruth — Git Repository UTility Helper. A TUI dashboard for monitoring and syncing multiple git repositories."
 license = "MIT"
-repository = "https://github.com/mik-tf/gruth"
+repository = "https://github.com/Mahmoud-Emad/gruth"
 readme = "README.md"
 keywords = ["git", "tui", "terminal", "monitor", "dashboard"]
 categories = ["command-line-utilities", "development-tools"]

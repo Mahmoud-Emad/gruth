@@ -4,7 +4,7 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ gruth │ Git Repository UTility Helper │ v0.2.0 │ ● idle                 │
+│ gruth │ Git Repository UTility Helper │ v0.5.0 │ ● idle                 │
 ├──────────────────────────────────────────────────────────────────────────┤
 │  Repository          Branch       Status     Sync       Last Commit     │
 │▸ hero_lib            development  ● clean    ✓ synced   2h ago          │
@@ -21,7 +21,7 @@
 
 ### From GitHub Releases (prebuilt binary)
 
-Download the latest release for your platform from the [Releases page](https://github.com/mik-tf/gruth/releases), then:
+Download the latest release for your platform from the [Releases page](https://github.com/Mahmoud-Emad/gruth/releases), then:
 
 ```bash
 # Extract the archive (the download is a .tar.gz)
@@ -49,7 +49,7 @@ cargo install --path .
 Or clone and build:
 
 ```bash
-git clone https://github.com/mik-tf/gruth.git
+git clone https://github.com/Mahmoud-Emad/gruth.git
 cd gruth
 cargo build --release
 sudo cp target/release/gruth /usr/local/bin/

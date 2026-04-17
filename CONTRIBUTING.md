@@ -5,7 +5,7 @@ Thanks for your interest in contributing to gruth!
 ## Getting Started
 
 ```bash
-git clone https://github.com/mik-tf/gruth.git
+git clone https://github.com/Mahmoud-Emad/gruth.git
 cd gruth
 cargo build
 cargo run -- -p ~/your-projects-dir

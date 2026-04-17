@@ -2,8 +2,8 @@
 
 use anyhow::{bail, Context, Result};
 
-const GITHUB_REPO: &str = "mik-tf/gruth";
-const API_URL: &str = "https://api.github.com/repos/mik-tf/gruth/releases/latest";
+const GITHUB_REPO: &str = "Mahmoud-Emad/gruth";
+const API_URL: &str = "https://api.github.com/repos/Mahmoud-Emad/gruth/releases/latest";
 
 pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
