@@ -4,7 +4,7 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ gruth │ Git Repository UTility Helper │ v0.5.0 │ ● idle                 │
+│ gruth │ Git Repository UTility Helper │ v0.6.0 │ ● idle                 │
 ├──────────────────────────────────────────────────────────────────────────┤
 │  Repository          Branch       Status     Sync       Last Commit     │
 │▸ hero_lib            development  ● clean    ✓ synced   2h ago          │
